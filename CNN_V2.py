@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 # @author: Awesome_Tang
-# @date: 2019-02-22
+# @date: 2018-12-15
 # @version: python2.7
 
 
@@ -17,20 +17,19 @@ class constant(object):
     classes = 10  # 类别数
     num_filters = 32  # 卷积核数
     kernel_size = 3  # 卷积核大小
-    alpha = 1e-2  # 学习率
+    alpha = 1e-3  # 学习率
     keep_prob = 0.5  # 保留比例
     steps = 10000  # 迭代次数
     batch_size = 128  # 每批次训练样本数
-    tensorboard_dir = 'tensorboard/RNN'  # log输出路径
+    tensorboard_dir = 'tensorboard/CNN'  # log输出路径
     print_per_batch = 100  # 每多少轮输出一次结果
     save_per_batch = 10  # 每多少轮存入tensorboard
-    num_units = 128
 
-    decay_rate = 0.9  # 衰减率
-    decay_steps = 100  # 衰减次数
+    decay_rate = 0.5  # 衰减率
+    decay_steps = 1000  # 衰减次数
 
 
-class RNN:
+class CNN:
 
     def __init__(self):
         self.mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
@@ -38,7 +37,7 @@ class RNN:
         self.input_y = tf.placeholder(tf.float32, [None, constant.classes], name='input_y')
         self.keep_prob = tf.placeholder("float")
 
-        self.rnn_model()
+        self.cnn_model()
 
     @staticmethod
     def weight_variable(shape):
@@ -50,35 +49,68 @@ class RNN:
         initial = tf.constant(0.1, shape=shape)
         return tf.Variable(initial)
 
+    @staticmethod
+    def conv2d(x, w):
+        return tf.nn.conv2d(x, w, strides=[1, 1, 1, 1], padding="SAME")
+
+    @staticmethod
+    def max_pool_2x2(x, kernel_size):
+        return tf.nn.max_pool(x, ksize=kernel_size, strides=[1, 2, 2, 1], padding="SAME")
+
     def feed_data(self, x, y, keep_prob=1.):
         feed_dict = {self.input_x: x,
                      self.input_y: y,
                      self.keep_prob: keep_prob}
         return feed_dict
 
-    def rnn_model(self):
-        # 定义RNN（LSTM）结构
-        x_image = tf.reshape(self.input_x, [-1, 28, 28])
-        rnn_cell = tf.nn.rnn_cell.LSTMCell(num_units=constant.num_units, name='basic_lstm_cell')
-        rnn_cell = tf.contrib.rnn.DropoutWrapper(cell=rnn_cell,
-                                                 output_keep_prob=self.keep_prob)
-        outputs, final_state = tf.nn.dynamic_rnn(cell=rnn_cell,
-                                                 inputs=x_image,
-                                                 initial_state=None,
-                                                 dtype=tf.float32,
-                                                 time_major=False)
-        output = tf.layers.dense(inputs=outputs[:, -1, :], units=constant.classes)
+    def cnn_model(self):
+        #  第一层： 卷积
+        x_image = tf.reshape(self.input_x, [-1, 28, 28, 1])
+        x_padding = tf.pad(x_image,[[0,0],[2,2],[2,2],[0,0]],"CONSTANT")
+        w_cv1 = self.weight_variable([5, 5, 1, 32])
+        b_cv1 = self.bias_variable([32])
+        h_cv1 = tf.nn.relu(tf.add(self.conv2d(x_padding, w_cv1), b_cv1))
+        h_mp1 = self.max_pool_2x2(h_cv1, [1, 2, 2, 1])
+        h_mp1 = tf.nn.dropout(h_mp1, self.keep_prob)
 
+        # 第二层： 卷积
+        w_cv2 = self.weight_variable([5, 5, 32, 64])
+        b_cv2 = self.bias_variable([64])
+        h_cv2 = tf.nn.relu(tf.add(self.conv2d(h_mp1, w_cv2), b_cv2))
+        h_mp2 = self.max_pool_2x2(h_cv2, [1, 2, 2, 1])
+        h_mp2 = tf.nn.dropout(h_mp2, self.keep_prob)
+
+        # 第二层： 卷积
+        w_cv3 = self.weight_variable([5, 5, 64, 128])
+        b_cv3 = self.bias_variable([128])
+        h_cv3 = tf.nn.relu(tf.add(self.conv2d(h_mp2, w_cv3), b_cv3))
+        h_mp3 = self.max_pool_2x2(h_cv3, [1, 2, 2, 1])
+        h_mp3 = tf.nn.dropout(h_mp3, self.keep_prob)
+
+        # 第三层： 全连接
+        w_fc1 = self.weight_variable([4 * 4 * 128, 1024])
+        b_fc1 = self.bias_variable([1024])
+        h_mp2_flat = tf.reshape(h_mp3, [-1, 4 * 4 * 128])
+        h_fc1 = tf.nn.relu(tf.add(tf.matmul(h_mp2_flat, w_fc1), b_fc1))
+        h_fc1 = tf.nn.dropout(h_fc1, self.keep_prob)
+
+        w_fc2 = self.weight_variable([1024, 10])
+        b_fc2 = self.bias_variable([10])
+        y_conv = tf.add(tf.matmul(h_fc1, w_fc2), b_fc2)
+
+        # 变换学习率
         gloabl_steps = tf.Variable(0, trainable=False)
         learning_rate = tf.train.exponential_decay(constant.alpha, gloabl_steps, constant.decay_steps,
                                                    constant.decay_rate, staircase=True)
 
-        loss = tf.losses.softmax_cross_entropy(onehot_labels=self.input_y, logits=output)  # 计算loss
+        # Adam优化器
+        loss = tf.reduce_mean(
+            tf.nn.sigmoid_cross_entropy_with_logits(labels=self.input_y, logits=y_conv))
         train_step = tf.train.AdamOptimizer(
             learning_rate).minimize(loss, global_step=gloabl_steps)
-
-        correct_prediction = tf.equal(tf.argmax(self.input_y, axis=1), tf.argmax(output, axis=1))
-        accuracy = tf.reduce_mean(tf.cast(correct_prediction, 'float'))  # 计算正确率
+        correct_prediction = tf.equal(
+            tf.argmax(y_conv, 1), tf.argmax(self.input_y, 1))
+        accuracy = tf.reduce_mean(tf.cast(correct_prediction, "float"))
 
         tf.summary.scalar("loss", loss)
         tf.summary.scalar("accuracy", accuracy)
@@ -127,4 +159,4 @@ class RNN:
 
 
 if __name__ == "__main__":
-    RNN()
+    CNN()
