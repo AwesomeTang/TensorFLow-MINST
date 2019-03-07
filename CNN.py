@@ -47,7 +47,7 @@ class CNN:
             os.mkdir(Config.saver_folder)
         self.save_path = os.path.join(Config.saver_folder, 'best_validation')
 
-        self.cnn_model()
+        self.run_model()
 
     @staticmethod
     def weight_variable(shape):
@@ -115,17 +115,18 @@ class CNN:
         第三层： 全连接
         (batch_size, 7, 7, 64)->(batch_size, 7 * 7 * 64)->(batch_size, 128)
         """
-        w_fc1 = self.weight_variable([7 * 7 * 64, 128])
-        b_fc1 = self.bias_variable([128])
+        w_fc1 = self.weight_variable([7 * 7 * 64, 1024])
+        b_fc1 = self.bias_variable([1024])
         h_mp2_flat = tf.reshape(h_mp2, [-1, 7 * 7 * 64])
         h_fc1 = tf.nn.relu(tf.add(tf.matmul(h_mp2_flat, w_fc1), b_fc1))
-        h_fc1 = tf.nn.dropout(h_fc1, self.keep_prob)
+        h_nm3 = tf.layers.batch_normalization(h_fc1, training=self.is_training, momentum=0.9)
+        h_fc1 = tf.nn.dropout(h_nm3, self.keep_prob)
 
         """
         第四层： 全连接
         (batch_size, 128)->(batch_size, 10)
         """
-        w_fc2 = self.weight_variable([128, 10])
+        w_fc2 = self.weight_variable([1024, 10])
         b_fc2 = self.bias_variable([10])
         y_conv = tf.add(tf.matmul(h_fc1, w_fc2), b_fc2)
 
@@ -136,7 +137,7 @@ class CNN:
 
         # Adam优化器
         loss = tf.reduce_mean(
-            tf.nn.softmax_cross_entropy_with_logits(labels=self.input_y, logits=y_conv))
+            tf.nn.softmax_cross_entropy_with_logits_v2(labels=self.input_y, logits=y_conv))
 
         update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
         with tf.control_dependencies(update_ops):
@@ -153,13 +154,17 @@ class CNN:
         tf.summary.scalar("accuracy", accuracy)
         merged_summary = tf.summary.merge_all()
         writer = tf.summary.FileWriter(Config.tensorboard_dir)
+        return train_step, gloabl_steps, accuracy, loss, merged_summary, writer
+
+    def run_model(self):
+        train_step, gloabl_steps, accuracy, loss, merged_summary, writer = self.cnn_model()
 
         saver = tf.train.Saver(max_to_keep=1)
 
         start_time = datetime.now()
         best_acc = 0
         last_improved_step = 0
-        require_steps = 3000
+        require_steps = 10000
 
         print('Training & Evaluating......')
         sess = tf.Session()
@@ -199,6 +204,7 @@ class CNN:
 
             if i - last_improved_step > require_steps:
                 # 超过require_steps验证集准确率提升，提前结束训练
+                print('No improvement for over %d steps, auto-stopping....' % require_steps)
                 break
 
         end_time = datetime.now()
@@ -208,6 +214,8 @@ class CNN:
         # 输出测试集准确率
         data_x, data_y = self.mnist.test.images, self.mnist.test.labels
         feed_dict = self.feed_data(data_x, data_y)
+
+        # 加载本地模型文件
         sess = self.restore_model()
         test_acc, test_loss = sess.run([accuracy, loss],
                                        feed_dict=feed_dict)

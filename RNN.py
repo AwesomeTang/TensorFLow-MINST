@@ -10,7 +10,7 @@ from tensorflow.examples.tutorials.mnist import input_data
 from datetime import datetime
 
 
-class constant(object):
+class Config(object):
     """
     CNN 模型参数
     """
@@ -25,6 +25,7 @@ class constant(object):
     print_per_batch = 100  # 每多少轮输出一次结果
     save_per_batch = 10  # 每多少轮存入tensorboard
     num_units = 128
+    num_layers = 2
 
     decay_rate = 0.9  # 衰减率
     decay_steps = 100  # 衰减次数
@@ -35,7 +36,7 @@ class RNN:
     def __init__(self):
         self.mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
         self.input_x = tf.placeholder(tf.float32, [None, 784], name='input_x')
-        self.input_y = tf.placeholder(tf.float32, [None, constant.classes], name='input_y')
+        self.input_y = tf.placeholder(tf.float32, [None, Config.classes], name='input_y')
         self.keep_prob = tf.placeholder("float")
 
         self.rnn_model()
@@ -56,22 +57,31 @@ class RNN:
                      self.keep_prob: keep_prob}
         return feed_dict
 
+    def build_cells(self):
+        cells = []
+        for _ in range(Config.num_layers):
+            rnn_cell = tf.nn.rnn_cell.GRUCell(num_units=Config.num_units, name='basic_lstm_cell')
+            rnn_cell = tf.contrib.rnn.DropoutWrapper(cell=rnn_cell,
+                                                     output_keep_prob=self.keep_prob)
+            cells.append(rnn_cell)
+
+        return cells
+
     def rnn_model(self):
         # 定义RNN（LSTM）结构
         x_image = tf.reshape(self.input_x, [-1, 28, 28])
-        rnn_cell = tf.nn.rnn_cell.LSTMCell(num_units=constant.num_units, name='basic_lstm_cell')
-        rnn_cell = tf.contrib.rnn.DropoutWrapper(cell=rnn_cell,
-                                                 output_keep_prob=self.keep_prob)
+        cells = self.build_cells()
+        rnn_cell = tf.contrib.rnn.MultiRNNCell(cells, state_is_tuple=True)
         outputs, final_state = tf.nn.dynamic_rnn(cell=rnn_cell,
                                                  inputs=x_image,
                                                  initial_state=None,
                                                  dtype=tf.float32,
                                                  time_major=False)
-        output = tf.layers.dense(inputs=outputs[:, -1, :], units=constant.classes)
+        output = tf.layers.dense(inputs=outputs[:, -1, :], units=Config.classes)
 
         gloabl_steps = tf.Variable(0, trainable=False)
-        learning_rate = tf.train.exponential_decay(constant.alpha, gloabl_steps, constant.decay_steps,
-                                                   constant.decay_rate, staircase=True)
+        learning_rate = tf.train.exponential_decay(Config.alpha, gloabl_steps, Config.decay_steps,
+                                                   Config.decay_rate, staircase=True)
 
         loss = tf.losses.softmax_cross_entropy(onehot_labels=self.input_y, logits=output)  # 计算loss
         train_step = tf.train.AdamOptimizer(
@@ -83,25 +93,25 @@ class RNN:
         tf.summary.scalar("loss", loss)
         tf.summary.scalar("accuracy", accuracy)
         merged_summary = tf.summary.merge_all()
-        writer = tf.summary.FileWriter(constant.tensorboard_dir)
+        writer = tf.summary.FileWriter(Config.tensorboard_dir)
 
         start_time = datetime.now()
 
         sess = tf.Session()
         sess.run(tf.global_variables_initializer())
 
-        for i in range(constant.steps):
-            data_x, data_y = self.mnist.train.next_batch(constant.batch_size)
-            feed_dict = self.feed_data(data_x, data_y, constant.keep_prob)
+        for i in range(Config.steps):
+            data_x, data_y = self.mnist.train.next_batch(Config.batch_size)
+            feed_dict = self.feed_data(data_x, data_y, Config.keep_prob)
 
             sess.run([train_step, gloabl_steps], feed_dict=feed_dict)
 
-            if i % constant.save_per_batch == 0:
+            if i % Config.save_per_batch == 0:
                 feed_dict[self.keep_prob] = 1.
                 s = sess.run(merged_summary, feed_dict=feed_dict)
                 writer.add_summary(s, i)
 
-            if i % constant.print_per_batch == 0:
+            if i % Config.print_per_batch == 0:
                 train_acc, train_loss = sess.run([accuracy, loss],
                                                  feed_dict=feed_dict)
                 data_x, data_y = self.mnist.validation.images, self.mnist.validation.labels
