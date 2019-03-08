@@ -9,7 +9,7 @@ from tensorflow.examples.tutorials.mnist import input_data
 from datetime import datetime
 
 
-class Constant(object):
+class Config(object):
     classes = 10  # 类别数
     alpha = 1e-2  # 学习率
     steps = 10000  # 迭代次数
@@ -21,12 +21,13 @@ class Constant(object):
 
 class SoftMax:
 
-    def __init__(self, constant):
-        self.constant = constant
+    def __init__(self, Config):
+        self.Config = Config
+        print('Loading Data......')
         self.mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
         self.input_x = tf.placeholder(tf.float32, [None, 784], name='input_x')
         self.input_y = tf.placeholder(
-            tf.float32, [None, self.constant.classes], name='input_y')
+            tf.float32, [None, self.Config.classes], name='input_y')
 
         self.run_model()
 
@@ -45,7 +46,7 @@ class SoftMax:
         cross_entropy = tf.reduce_mean(
             tf.nn.softmax_cross_entropy_with_logits(labels=self.input_y, logits=y))
         train_step = tf.train.GradientDescentOptimizer(
-            self.constant.alpha).minimize(cross_entropy)
+            self.Config.alpha).minimize(cross_entropy)
         correct_prediction = tf.equal(
             tf.argmax(y, 1), tf.argmax(self.input_y, 1))
         accuracy = tf.reduce_mean(tf.cast(correct_prediction, "float"))
@@ -53,23 +54,25 @@ class SoftMax:
         tf.summary.scalar("loss", cross_entropy)
         tf.summary.scalar("accuracy", accuracy)
         merged_summary = tf.summary.merge_all()
-        writer = tf.summary.FileWriter(self.constant.tensorboard_dir)
+        writer = tf.summary.FileWriter(self.Config.tensorboard_dir)
+
+        print('Training & Evaluating......')
 
         start_time = datetime.now()
 
         sess = tf.Session()
         sess.run(tf.global_variables_initializer())
 
-        for i in range(self.constant.steps):
-            data_x, data_y = self.mnist.train.next_batch(self.constant.batch_size)
+        for i in range(self.Config.steps):
+            data_x, data_y = self.mnist.train.next_batch(self.Config.batch_size)
             feed_dict = self.feed_data(data_x, data_y)
             sess.run(train_step, feed_dict=feed_dict)
 
-            if i % self.constant.save_per_batch == 0:
+            if i % self.Config.save_per_batch == 0:
                 s = sess.run(merged_summary, feed_dict=feed_dict)
                 writer.add_summary(s, i)
 
-            if i % self.constant.print_per_batch == 0:
+            if i % self.Config.print_per_batch == 0:
                 train_acc, train_loss = sess.run([accuracy, cross_entropy],
                                                  feed_dict=feed_dict)
                 data_x, data_y = self.mnist.validation.images, self.mnist.validation.labels
@@ -82,16 +85,16 @@ class SoftMax:
 
         end_time = datetime.now()
         time_diff = (end_time - start_time).seconds
-        print 'Time Usage : {:.2f} mins'.format(time_diff / 60.)
+        print('Time Usage : {:.2f} mins'.format(time_diff / 60.))
 
         data_x, data_y = self.mnist.test.images, self.mnist.test.labels
         feed_dict = self.feed_data(data_x, data_y)
         test_acc, test_loss = sess.run([accuracy, cross_entropy],
                                        feed_dict=feed_dict)
 
-        print "Test accuracy :{:8.2%}, loss:{:6.2f}".format(test_acc, test_loss)
+        print("Test accuracy :{:8.2%}, loss:{:6.2f}".format(test_acc, test_loss))
         sess.close()
 
 
 if __name__ == "__main__":
-    SoftMax(Constant)
+    SoftMax(Config)
