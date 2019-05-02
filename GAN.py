@@ -24,7 +24,8 @@ class Config:
 
     num_units = 128
     size = 784
-    noise_size = 100
+    classes = 10
+    noise_size = 90
 
     smooth = 0.01
     learning_rate = 1e-4
@@ -41,16 +42,18 @@ class Gan:
 
         # 定义占位符，真实图片和生成的图片
         self.real_images = tf.placeholder(tf.float32, [None, Config.size], name='real_images')
+        self.labels = tf.placeholder(tf.float32, [None, Config.classes], name='labels')
         self.noise = tf.placeholder(tf.float32, [None, Config.noise_size], name='noise')
         self.drop_rate = tf.placeholder('float')
 
         self.train_step()
 
-    def generator_graph(self, noise, n_units, out_dim, alpha, reuse=False):
-        # todo 生成器
+    def generator_graph(self, noise, label, n_units, out_dim, alpha, reuse=False):
+
         with tf.variable_scope('generator', reuse=reuse):
+            input = tf.concat(values=[noise, label], axis=1)
             # Hidden layer
-            h1 = tf.layers.dense(noise, n_units, activation=None)
+            h1 = tf.layers.dense(input, n_units, activation=None)
             # Leaky ReLU
             h1 = tf.maximum(alpha * h1, h1)
             h1 = tf.layers.dropout(h1, rate=self.drop_rate)
@@ -61,11 +64,12 @@ class Gan:
         return out
 
     @staticmethod
-    def discriminator_graph(image, n_units, alpha, reuse=False):
-        # todo 判别器
+    def discriminator_graph(image, label, n_units, alpha, reuse=False):
+
         with tf.variable_scope('discriminator', reuse=reuse):
+            input = tf.concat(values=[image, label], axis=1)
             # Hidden layer
-            h1 = tf.layers.dense(image, n_units, activation=None)
+            h1 = tf.layers.dense(input, n_units, activation=None)
             # Leaky ReLU
             h1 = tf.maximum(alpha * h1, h1)
 
@@ -76,11 +80,11 @@ class Gan:
 
     def net(self):
         # generator
-        fake_image = self.generator_graph(self.noise, Config.num_units, Config.size, Config.alpha)
+        fake_image = self.generator_graph(self.noise, self.labels, Config.num_units, Config.size, Config.alpha)
 
         # discriminator
-        real_logits = self.discriminator_graph(self.real_images, Config.num_units, Config.alpha)
-        fake_logits = self.discriminator_graph(fake_image, Config.num_units, Config.alpha, reuse=True)
+        real_logits = self.discriminator_graph(self.real_images, self.labels, Config.num_units, Config.alpha)
+        fake_logits = self.discriminator_graph(fake_image, self.labels, Config.num_units, Config.alpha, reuse=True)
 
         # discriminator的loss
         # 识别真实图片
@@ -120,37 +124,47 @@ class Gan:
         sess.run(tf.global_variables_initializer())
 
         for step in range(Config.steps):
-            real_image, _ = self.mnist.train.next_batch(Config.batch_size)
+            real_image, labels = self.mnist.train.next_batch(Config.batch_size)
 
             real_image = real_image * 2 - 1
 
             # generator的输入噪声
             batch_noise = np.random.uniform(-1, 1, size=(Config.batch_size, Config.noise_size))
 
-            sess.run(gen_optimizer, feed_dict={self.noise: batch_noise, self.drop_rate: Config.drop_rate})
-            sess.run(dis_optimizer, feed_dict={self.noise: batch_noise, self.real_images: real_image})
+            sess.run(gen_optimizer,
+                     feed_dict={self.noise: batch_noise, self.labels: labels, self.drop_rate: Config.drop_rate})
+            sess.run(dis_optimizer,
+                     feed_dict={self.noise: batch_noise, self.labels: labels, self.real_images: real_image})
 
             if step % Config.print_per_step == 0:
-                dis_loss = sess.run(d_loss, feed_dict={self.noise: batch_noise, self.real_images: real_image})
-                gen_loss = sess.run(g_loss, feed_dict={self.noise: batch_noise, self.drop_rate: 1.})
+                dis_loss = sess.run(d_loss, feed_dict={self.noise: batch_noise, self.labels: labels,
+                                                       self.real_images: real_image})
+                gen_loss = sess.run(g_loss,
+                                    feed_dict={self.noise: batch_noise, self.labels: labels, self.drop_rate: 1.})
                 end_time = datetime.now()
                 time_diff = (end_time - start_time).seconds
 
-                msg = 'Step {:3} k Dis_Loss:{:6.2f}, Gen_Loss:{:6.2f}, Time_Usage:{:6.2f} mins.'
+                msg = 'Step {:3}k Dis_Loss:{:6.2f}, Gen_Loss:{:6.2f}, Time_Usage:{:6.2f} mins.'
                 print(msg.format(int(step / 1000), dis_loss, gen_loss, time_diff / 60.))
 
         self.gen_image(sess)
 
     def gen_image(self, sess):
-        sample_noise = np.random.uniform(-1, 1, size=(25, Config.noise_size))
+        sample_noise = np.random.uniform(-1, 1, size=(100, Config.noise_size))
+        y_samples = np.zeros(shape=[100, Config.classes])
+        for i in range(100):
+            idx = i % 10
+            y_samples[i, idx] = 1
+
+        # sample_noise = np.concatenate((sample_noise, y_samples), axis=1)
         samples = sess.run(
-            self.generator_graph(self.noise, Config.num_units, Config.size, Config.alpha, reuse=True),
-            feed_dict={self.noise: sample_noise})
+            self.generator_graph(self.noise, y_samples, Config.num_units, Config.size, Config.alpha, reuse=True),
+            feed_dict={self.noise: sample_noise, self.labels: y_samples})
 
         plt.figure(figsize=(8, 8), dpi=80)
-        for i in range(25):
+        for i in range(100):
             img = samples[i]
-            plt.subplot(5, 5, i + 1)
+            plt.subplot(10, 10, i + 1)
             plt.imshow(img.reshape((28, 28)), cmap='Greys_r')
             plt.axis('off')
         plt.show()
